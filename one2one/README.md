@@ -1,4 +1,4 @@
-# Mellanox RDMA文档中的样例 **7.2 Code for Send, Receive, RDMA Read, RDMA Write**
+## Mellanox RDMA文档中的样例 (7.2 Code for Send, Receive, RDMA Read, RDMA Write)
 编译库的需求：`libibverbs `
 编译参数:GCC <文件名>  -o service  -libverbs
 运行方式：
@@ -9,4 +9,4 @@
        服务端：./service   -g  0
        客户端：./service -g 0  服务端IP
 
-# Based on : https://github.com/fruitdish/RDMA-EXAMPLE
+## Based on : https://github.com/fruitdish/RDMA-EXAMPLE
