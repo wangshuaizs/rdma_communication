@@ -29,6 +29,7 @@ int main(int argc, char *argv[])
 {
 	struct resources res;
 	int rc = 1;
+	float desired_rate = 10.0; //unit: Gbps, the max value is 40G,otherwise MSG_SIZE is modified
 	/* parse the command line parameters */
 	while (1)
 	{
@@ -39,10 +40,11 @@ int main(int argc, char *argv[])
 			{.name = "ib-port", .has_arg = 1, .val = 'i'},
 			{.name = "gid-idx", .has_arg = 1, .val = 'g'},
 			{.name = "service-level", .has_arg = 1, .val = 's'},
-			{.name = "help", .has_arg = 0, .val = 'h'},
+			{.name = "desired-rate", .has_arg = 1, .val = 'r'},
+			{.name = "help", .has_arg = 0, .val = '\0'},
 			{.name = NULL, .has_arg = 0, .val = '\0'}
         };
-		c = getopt_long(argc, argv, "p:d:i:g:s:h:", long_options, NULL);
+		c = getopt_long(argc, argv, "p:d:i:g:s:r:h:", long_options, NULL);
 		if (c == -1)
 			break;
 		switch (c)
@@ -77,6 +79,14 @@ int main(int argc, char *argv[])
 				return 1;
 			}
 			break;
+		case 'r':
+			desired_rate = strtoul(optarg, NULL, 0);
+			fprintf(stdout, "desired_rate = %f\n", desired_rate);
+			if (desired_rate == 0)
+			{
+				desired_rate = 10;
+			}
+			break;
 		case 'h':
 			usage(argv[0]);
 			return 1;
@@ -106,16 +116,24 @@ int main(int argc, char *argv[])
 	}
 	printf("Connected.\n");
 	/* begin to send data */
-	strcpy(res.buf, MSG);
-	for (int i = 0; i < 8; i++)
+	//strcpy(res.buf, MSG);
+	int n_messages = 1000000;
+	int len = (int)(desired_rate / 8.0 / 1.068 * 1000 * 1000 * 10); // 1.068 is compensation factor
+	printf("len = %d\n", len);
+	for (int i = 0; i < n_messages; i++)
 	{
-		int ret = post_send(&res, IBV_WR_RDMA_WRITE_WITH_IMM, strlen(MSG)+1);
+		int ret = post_send(&res, IBV_WR_RDMA_WRITE_WITH_IMM, len);
 		//int ret = post_send(&res, IBV_WR_SEND);
 		if (ret)
 		{
 			fprintf(stderr, "failed to post SR\n");
 			rc = 1;
 			goto main_exit;
+		}
+		usleep(10*1000); // 10ms
+		if (i%100 == 0)
+		{
+			fprintf(stdout, "sent %d/%d.\n", i, n_messages);	
 		}
 		// sleep(1);
 	}

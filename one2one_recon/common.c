@@ -643,7 +643,7 @@ int modify_qp_to_rtr(struct ibv_qp *qp, uint32_t remote_qpn, uint16_t dlid, uint
 	int rc;
 	memset(&attr, 0, sizeof(attr));
 	attr.qp_state = IBV_QPS_RTR;
-	attr.path_mtu = IBV_MTU_256;
+	attr.path_mtu = IBV_MTU_1024; // default MTU is 1024
 	attr.dest_qp_num = remote_qpn;
 	attr.rq_psn = 0;
 	attr.max_dest_rd_atomic = 1;
@@ -926,5 +926,7 @@ void usage(const char *argv0)
 	fprintf(stdout, " -i, --ib-port <port> use port <port> of IB device (default 1)\n");
 	fprintf(stdout, " -g, --gid_idx <git index> gid index to be used in GRH (default not used)\n");
 	fprintf(stdout, " -s, --service-level <sl> use service level (default 0)\n");
+	if (!strcmp(argv0, "./client"))
+		fprintf(stdout, " -r, --desired-rate <rate> desired sending rate (default 10, max 40)\n");
 	fprintf(stdout, " -h, --help show this help message\n");
 }
