@@ -104,7 +104,33 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "failed to connect QPs\n");
 		goto main_exit;
 	}
-	printf("Connected.");
+	printf("Connected.\n");
+	/* begin to send data */
+	strcpy(res.buf, MSG);
+	for (int i = 0; i < 8; i++)
+	{
+		int ret = post_send(&res, IBV_WR_RDMA_WRITE_WITH_IMM, strlen(MSG)+1);
+		//int ret = post_send(&res, IBV_WR_SEND);
+		if (ret)
+		{
+			fprintf(stderr, "failed to post SR\n");
+			rc = 1;
+			goto main_exit;
+		}
+		// sleep(1);
+	}
+	int ret = post_send(&res, IBV_WR_RDMA_WRITE_WITH_IMM, 0);
+	if (ret)
+	{
+		fprintf(stderr, "failed to post SR\n");
+		rc = 1;
+		goto main_exit;
+	}
+		
+	rc = 0;
+	pthread_join(res.cq_poller_thread, NULL);
+	//pthread_exit(NULL);
+	//while (1);
 main_exit:
 	if (resources_destroy(&res))
 	{

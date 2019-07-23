@@ -99,7 +99,11 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "failed to connect QPs\n");
 		goto main_exit;
 	}
-	printf("Connected.");
+	printf("Connected.\n");
+	rc = 0;
+	pthread_join(res.cq_poller_thread, NULL);
+	//pthread_exit(NULL); 
+	//while(1);
 main_exit:
 	if (resources_destroy(&res))
 	{

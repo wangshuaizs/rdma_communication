@@ -132,9 +132,9 @@ int sock_sync_data(int sock, int xfer_size, char *local_data, char *remote_data)
 /******************************************************************************
 End of socket operations
 ******************************************************************************/
-/* poll_completion */
+/* poll_cq */
 /******************************************************************************
-* Function: poll_completion
+* Function: poll_cq
 *
 * Input
 * res pointer to resources structure
@@ -143,54 +143,71 @@ End of socket operations
 * none
 *
 * Returns
-* 0 on success, 1 on failure
+* none
 *
 * Description
-* Poll the completion queue for a single event. This function will continue to
-* poll the queue until MAX_POLL_CQ_TIMEOUT milliseconds have passed.
+* Poll the completion queue.
 *
 ******************************************************************************/
-int poll_completion(struct resources *res)
+void *poll_cq(struct resources *res)
 {
-	struct ibv_wc wc;
-	unsigned long start_time_msec;
-	unsigned long cur_time_msec;
-	struct timeval cur_time;
-	int poll_result;
-	int rc = 0;
-	/* poll the completion for a while before giving up of doing it .. */
-	gettimeofday(&cur_time, NULL);
-	start_time_msec = (cur_time.tv_sec * 1000) + (cur_time.tv_usec / 1000);
-	do
-	{
-		poll_result = ibv_poll_cq(res->cq, 1, &wc);
-		gettimeofday(&cur_time, NULL);
-		cur_time_msec = (cur_time.tv_sec * 1000) + (cur_time.tv_usec / 1000);
-	} while ((poll_result == 0) && ((cur_time_msec - start_time_msec) < MAX_POLL_CQ_TIMEOUT));
-	if (poll_result < 0)
-	{
-		/* poll CQ failed */
-		fprintf(stderr, "poll CQ failed\n");
-		rc = 1;
-	}
-	else if (poll_result == 0)
-	{ /* the CQ is empty */
-		fprintf(stderr, "completion wasn't found in the CQ after timeout\n");
-		rc = 1;
-	}
-	else
-	{
-		/* CQE found */
-		fprintf(stdout, "completion was found in CQ with status 0x%x\n", wc.status);
-		/* check the completion status (here we don't care about the completion opcode */
-		if (wc.status != IBV_WC_SUCCESS)
+	int finished = 0;
+	struct ibv_cq *cq;
+	void *ctx = NULL;
+	struct ibv_wc wc[MAX_CONCURRENT_WRITES * 2];
+#ifdef DEBUG
+	fprintf(stdout, "thread poll_cq has been created successfully.\n");
+#endif
+
+  	while (1) {
+    	ibv_get_cq_event(res->event_channel, &cq, &ctx);
+		// assert(cq == res->cq);
+    	ibv_ack_cq_events(cq, 1);
+    	ibv_req_notify_cq(cq, 0);
+
+    	int ne = ibv_poll_cq(cq, MAX_CONCURRENT_WRITES * 2, (struct ibv_wc*)wc);
+		for (int i = 0; i < ne; ++i)
 		{
-			fprintf(stderr, "got bad completion with status: 0x%x, vendor syndrome: 0x%x\n", wc.status,
-					wc.vendor_err);
-			rc = 1;
-		}
-	}
-	return rc;
+      		if (wc[i].status == IBV_WC_SUCCESS)
+	  		{
+				if (wc[i].opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
+					uint32_t imm_data = wc[i].imm_data;
+					// struct rdma_cm_id *id = (struct rdma_cm_id *)(uintptr_t)(wc[i]->wr_id);
+					res->buf[imm_data] = '\0';
+#ifdef DEBUG
+					fprintf(stdout, "IBV_WC_RECV_RDMA_WITH_IMM : %d, %u, %s\n", ne, imm_data, res->buf);
+#endif
+					if (imm_data == 0)
+					{
+						finished = 1;
+						int ret = post_send(res, IBV_WR_RDMA_WRITE_WITH_IMM, 0); // signal for sender
+						if (ret)
+						{
+							fprintf(stderr, "failed to post SR to signal sender\n");
+						}
+						break;
+					}
+					post_receive(res); // put back a recv wr
+				}
+				else if (wc[i].opcode == IBV_WC_RECV) {
+#ifdef DEBUG
+					fprintf(stdout, "IBV_WC_RECV : %s\n", res->buf);
+#endif
+					post_receive(res); // put back a recv wr
+				}
+				/* else if (wc[i].opcode == IBV_WC_RDMA_WRITE) // RDMA Write operation for a WR that was posted to the Send Queue
+					fprintf(stdout, "%u\n", wc[i].imm_data); */
+			}
+			else
+			{
+				fprintf(stderr, "got bad completion with status: 0x%x, vendor syndrome: 0x%x\n", wc[i].status,
+							wc[i].vendor_err);
+			}
+    	}
+		if (finished)
+			break;
+  	}
+  	return NULL;
 }
 /******************************************************************************
 * Function: post_send
@@ -208,7 +225,7 @@ int poll_completion(struct resources *res)
 * Description
 * This function will create and post a send work request
 ******************************************************************************/
-int post_send(struct resources *res, int opcode)
+int post_send(struct resources *res, int opcode, uint32_t len)
 {
 	struct ibv_send_wr sr;
 	struct ibv_sge sge;
@@ -217,11 +234,11 @@ int post_send(struct resources *res, int opcode)
 	/* prepare the scatter/gather entry */
 	memset(&sge, 0, sizeof(sge));
 	sge.addr = (uintptr_t)res->buf;
-	sge.length = MSG_SIZE;
+	sge.length = len;
 	sge.lkey = res->mr->lkey;
 	/* prepare the send work request */
 	memset(&sr, 0, sizeof(sr));
-	sr.next = NULL;
+	//sr.next = NULL;
 	sr.wr_id = 0;
 	sr.sg_list = &sge;
 	sr.num_sge = 1;
@@ -232,10 +249,17 @@ int post_send(struct resources *res, int opcode)
 		sr.wr.rdma.remote_addr = res->remote_props.addr;
 		sr.wr.rdma.rkey = res->remote_props.rkey;
 	}
+	if (opcode == IBV_WR_RDMA_WRITE_WITH_IMM)
+	{
+		sr.imm_data = len;
+#ifdef DEBUG
+		fprintf(stdout, "IBV_WR_RDMA_WRITE_WITH_IMM : %u, %s\n", len, res->buf);
+#endif
+	}
 	/* there is a Receive Request in the responder side, so we won't get any into RNR flow */
 	rc = ibv_post_send(res->qp, &sr, &bad_wr);
 	if (rc)
-		fprintf(stderr, "failed to post SR\n");
+		fprintf(stderr, "failed to post SR %d\n", rc);
 #ifdef DEBUG
 	else
 	{
@@ -279,6 +303,7 @@ int post_receive(struct resources *res)
 	struct ibv_sge sge;
 	struct ibv_recv_wr *bad_wr;
 	int rc;
+
 	/* prepare the scatter/gather entry */
 	memset(&sge, 0, sizeof(sge));
 	sge.addr = (uintptr_t)res->buf;
@@ -286,7 +311,7 @@ int post_receive(struct resources *res)
 	sge.lkey = res->mr->lkey;
 	/* prepare the receive work request */
 	memset(&rr, 0, sizeof(rr));
-	rr.next = NULL;
+	// rr.next = NULL;
 	rr.wr_id = 0;
 	rr.sg_list = &sge;
 	rr.num_sge = 1;
@@ -444,12 +469,30 @@ int resources_create(struct resources *res, struct config_t config)
 		rc = 1;
 		goto resources_create_exit;
 	}
-	/* each side will send only one WR, so Completion Queue with 1 entry is enough */
-	cq_size = 1;
-	res->cq = ibv_create_cq(res->ib_ctx, cq_size, NULL, NULL, 0);
+	res->event_channel = ibv_create_comp_channel(res->ib_ctx);
+	if (!res->event_channel)
+	{
+		fprintf(stderr, "failed to create completion event channel\n");
+		rc = 1;
+		goto resources_create_exit;
+	}
+	cq_size = MAX_CONCURRENT_WRITES * 2;
+	res->cq = ibv_create_cq(res->ib_ctx, cq_size, NULL, res->event_channel, 0);
 	if (!res->cq)
 	{
 		fprintf(stderr, "failed to create CQ with %u entries\n", cq_size);
+		rc = 1;
+		goto resources_create_exit;
+	}
+	if (ibv_req_notify_cq(res->cq, 0))
+	{
+		fprintf(stderr, "failed to request CQ notification\n");
+		rc = 1;
+		goto resources_create_exit;
+	}
+	if (pthread_create(&res->cq_poller_thread, NULL, poll_cq, res))
+	{
+		fprintf(stderr, "failed to create poll_cq thread\n");
 		rc = 1;
 		goto resources_create_exit;
 	}
@@ -482,8 +525,8 @@ int resources_create(struct resources *res, struct config_t config)
 	qp_init_attr.sq_sig_all = 1;
 	qp_init_attr.send_cq = res->cq;
 	qp_init_attr.recv_cq = res->cq;
-	qp_init_attr.cap.max_send_wr = 1;
-	qp_init_attr.cap.max_recv_wr = 1;
+	qp_init_attr.cap.max_send_wr = QUEUE_DEPTH_DEFAULT;
+	qp_init_attr.cap.max_recv_wr = QUEUE_DEPTH_DEFAULT;
 	qp_init_attr.cap.max_send_sge = 1;
 	qp_init_attr.cap.max_recv_sge = 1;
 	res->qp = ibv_create_qp(res->pd, &qp_init_attr);
@@ -649,9 +692,9 @@ int modify_qp_to_rts(struct ibv_qp *qp, struct config_t config)
 	int rc;
 	memset(&attr, 0, sizeof(attr));
 	attr.qp_state = IBV_QPS_RTS;
-	attr.timeout = 0x12;
-	attr.retry_cnt = 6;
-	attr.rnr_retry = 0;
+	attr.timeout = 14;
+	attr.retry_cnt = 7;
+	attr.rnr_retry = 7;
 	attr.sq_psn = 0;
 	attr.max_rd_atomic = 1;
 	flags = IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT |
@@ -736,15 +779,11 @@ int connect_qp(struct resources *res, struct config_t config)
 		fprintf(stderr, "change QP state to INIT failed\n");
 		goto connect_qp_exit;
 	}
-	/* let the client post RR to be prepared for incoming messages */
-	if (config.server_name)
+	rc = post_receive(res);
+	if (rc)
 	{
-		rc = post_receive(res);
-		if (rc)
-		{
-			fprintf(stderr, "failed to post RR\n");
-			goto connect_qp_exit;
-		}
+		fprintf(stderr, "failed to post RR\n");
+		goto connect_qp_exit;
 	}
 	/* modify the QP to RTR */
 	rc = modify_qp_to_rtr(res->qp, remote_con_data.qp_num, remote_con_data.lid, remote_con_data.gid, config);

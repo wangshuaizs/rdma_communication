@@ -11,6 +11,8 @@
 #include <endian.h>
 #include <byteswap.h>
 #include <getopt.h>
+#include <pthread.h>
+#include <assert.h>
 
 #include <sys/time.h>
 #include <arpa/inet.h>
@@ -20,10 +22,12 @@
 #include <netdb.h>
 /* poll CQ timeout in millisec (2 seconds) */
 #define MAX_POLL_CQ_TIMEOUT 2000
+#define MAX_CONCURRENT_WRITES 128
+#define QUEUE_DEPTH_DEFAULT 1024
 #define MSG "SEND operation "
 #define RDMAMSGR "RDMA read operation "
 #define RDMAMSGW "RDMA write operation"
-#define MSG_SIZE (strlen(MSG) + 1)
+#define MSG_SIZE 1024
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 static inline uint64_t htonll(uint64_t x) { return bswap_64(x); }
 static inline uint64_t ntohll(uint64_t x) { return bswap_64(x); }
@@ -64,17 +68,19 @@ struct resources
 	struct cm_con_data_t remote_props; /* values to connect to remote side */
 	struct ibv_context *ib_ctx;		   /* device handle */
 	struct ibv_pd *pd;				   /* PD handle */
+	struct ibv_comp_channel* event_channel;	 /* Completion event channel, to wait for work completions */
 	struct ibv_cq *cq;				   /* CQ handle */
 	struct ibv_qp *qp;				   /* QP handle */
 	struct ibv_mr *mr;				   /* MR handle for buf */
 	char *buf;						   /* memory buffer pointer, used for RDMA and send ops */
 	int sock;						   /* TCP socket file descriptor */
+	pthread_t cq_poller_thread;        /* thread to poll completion queue */
 };
 
 int sock_connect(const char *servername, int port);
 int sock_sync_data(int sock, int xfer_size, char *local_data, char *remote_data);
-int poll_completion(struct resources *res);
-int post_send(struct resources *res, int opcode);
+void *poll_cq(struct resources *res);
+int post_send(struct resources *res, int opcode, uint32_t len);
 int post_receive(struct resources *res);
 void resources_init(struct resources *res);
 int resources_create(struct resources *res, struct config_t config);

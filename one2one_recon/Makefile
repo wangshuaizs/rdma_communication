@@ -9,10 +9,10 @@ APPS    := client server
 all: ${APPS}
 
 client: common.o client.o
-	${LD} -o $@ $^ ${LDLIBS}
+	${LD} ${CFLAGS} -o $@ $^ ${LDLIBS}
 
 server: common.o server.o
-	${LD} -o $@ $^ ${LDLIBS}
+	${LD} ${CFLAGS} -o $@ $^ ${LDLIBS}
 
 clean:
 	rm -f *.o ${APPS}
