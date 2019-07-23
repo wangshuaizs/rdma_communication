@@ -151,6 +151,11 @@ End of socket operations
 ******************************************************************************/
 void *poll_cq(struct resources *res)
 {
+	struct timeval cur_time;
+	unsigned long start_time_msec;
+	unsigned long diff_time_msec;
+	unsigned long recv_cnt = 0, last_recv_cnt = 0;
+
 	int finished = 0;
 	struct ibv_cq *cq;
 	void *ctx = NULL;
@@ -159,6 +164,8 @@ void *poll_cq(struct resources *res)
 	fprintf(stdout, "thread poll_cq has been created successfully.\n");
 #endif
 
+	gettimeofday(&cur_time, NULL);
+	start_time_msec = (cur_time.tv_sec * 1000) + (cur_time.tv_usec / 1000);
   	while (1) {
     	ibv_get_cq_event(res->event_channel, &cq, &ctx);
 		// assert(cq == res->cq);
@@ -170,10 +177,11 @@ void *poll_cq(struct resources *res)
 		{
       		if (wc[i].status == IBV_WC_SUCCESS)
 	  		{
-				if (wc[i].opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
+				if (wc[i].opcode == IBV_WC_RECV_RDMA_WITH_IMM) { 
 					uint32_t imm_data = wc[i].imm_data;
 					// struct rdma_cm_id *id = (struct rdma_cm_id *)(uintptr_t)(wc[i]->wr_id);
 					res->buf[imm_data] = '\0';
+					recv_cnt += imm_data;
 #ifdef DEBUG
 					fprintf(stdout, "IBV_WC_RECV_RDMA_WITH_IMM : %d, %u, %s\n", ne, imm_data, res->buf);
 #endif
@@ -186,6 +194,16 @@ void *poll_cq(struct resources *res)
 							fprintf(stderr, "failed to post SR to signal sender\n");
 						}
 						break;
+					}
+
+					gettimeofday(&cur_time, NULL);
+					diff_time_msec = (cur_time.tv_sec * 1000) + (cur_time.tv_usec / 1000) - start_time_msec;
+					if (diff_time_msec >= 1000)
+					{
+						fprintf(stdout, "ingress rate: %5.1f Gbps\n", (recv_cnt-last_recv_cnt)*8.0/1000000/diff_time_msec);
+						last_recv_cnt = recv_cnt;
+						gettimeofday(&cur_time, NULL);
+						start_time_msec = (cur_time.tv_sec * 1000) + (cur_time.tv_usec / 1000);
 					}
 					post_receive(res); // put back a recv wr
 				}

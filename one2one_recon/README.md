@@ -4,4 +4,4 @@
 运行方式：
  1. 走ROCE:
        服务端：./server -g 2 -d mlx4_0 -i 2 -s 2
-       客户端：./client -g 2 -d mlx4_0 -i 2 -s 2 <服务端IP>
+       客户端：./client -g 2 -d mlx4_0 -i 2 -s 2 -r 10 <服务端IP>

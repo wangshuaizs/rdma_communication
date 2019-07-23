@@ -81,7 +81,6 @@ int main(int argc, char *argv[])
 			break;
 		case 'r':
 			desired_rate = strtoul(optarg, NULL, 0);
-			fprintf(stdout, "desired_rate = %f\n", desired_rate);
 			if (desired_rate == 0)
 			{
 				desired_rate = 10;
@@ -119,7 +118,6 @@ int main(int argc, char *argv[])
 	//strcpy(res.buf, MSG);
 	int n_messages = 1000000;
 	int len = (int)(desired_rate / 8.0 / 1.068 * 1000 * 1000 * 10); // 1.068 is compensation factor
-	printf("len = %d\n", len);
 	for (int i = 0; i < n_messages; i++)
 	{
 		int ret = post_send(&res, IBV_WR_RDMA_WRITE_WITH_IMM, len);
